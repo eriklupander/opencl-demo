@@ -8,25 +8,24 @@ import (
 	"unsafe"
 )
 
-type CLRay struct {
-	Origin    [4]float64
-	Direction [4]float64
-}
-
+// __attribute__((packed, aligned(16)))
 var printRayStructSrc = `
 
-typedef struct tag_ray{
-	double4 origin;
-	double4 direction;
-} ray;
+typedef struct __attribute__((aligned(128))) tag_mystruct{
+	double4 origin;       // 32 bytes
+	double4 direction;    // 32 bytes
+    float4 extra;         // 16 bytes
+    //char padding[48];     // 48 bytes
+} mystruct;
 
 __kernel void printRayStruct(
-   __global ray* input1,
+   __global mystruct* input1,
    __global double* output)
 {
    int i = get_global_id(0);
 	printf("Job: %d Origin: %f %f %f %f\n", i, input1[i].origin.x, input1[i].origin.y, input1[i].origin.z, input1[i].origin.w);
     printf("Job: %d Direct: %f %f %f %f\n", i, input1[i].direction.x, input1[i].direction.y, input1[i].direction.z, input1[i].direction.w);
+    printf("Job: %d Extra: %f %f %f %f\n", i, input1[i].extra.x, input1[i].extra.y, input1[i].extra.z, input1[i].extra.w);
     
 	output[i] = 1.0;
 }
@@ -34,8 +33,10 @@ __kernel void printRayStruct(
 `
 
 type MyStruct struct {
-	Origin    [4]float64
-	Direction [4]float64
+	Origin    [4]float64 // 32 bytes
+	Direction [4]float64 // 32 bytes
+	Extra     [4]float32 // 16 bytes
+	Padding   [48]byte   // 48 bytes => Total 128 bytes
 }
 
 func Structs(deviceIndex int) {
@@ -46,11 +47,14 @@ func Structs(deviceIndex int) {
 		input1 = append(input1, MyStruct{
 			Origin:    [4]float64{float64(1 + i), float64(2 * i), float64(3 * i), float64(4 * i)},
 			Direction: [4]float64{float64(5 + i), float64(6 * i), float64(7 * i), float64(8 * i)},
+			Extra:     [4]float32{999, 888, 777, 666}, // added just to demonstrate alignment
+			//Padding:   [48]byte{}, // not needed
 		})
 	}
 
 	sx := unsafe.Sizeof(input1[0])
-	ss := int(sx)
+	ss := nextPowOf2(int(sx))
+
 	fmt.Printf("size of a MyStruct is: %d bytes\n", ss)
 	platforms, err := cl.GetPlatforms()
 	if err != nil {
@@ -96,7 +100,7 @@ func Structs(deviceIndex int) {
 	}
 
 	// 3.3 Create the actual Kernel with a name, the Kernel is what we call when we want to execute something.
-	kernel, err := program.CreateKernel("square")
+	kernel, err := program.CreateKernel("printRayStruct")
 	if err != nil {
 		logrus.Fatalf("CreateKernel failed: %+v", err)
 	}
@@ -117,8 +121,7 @@ func Structs(deviceIndex int) {
 
 	// 5. Time to start loading data into GPU memory
 
-	// 5.1 create OpenCL buffers (memory) for the input data. Note that we're allocating 9x bytes the size of data.
-	//     since each float64 uses 8 bytes.
+	// 5.1 create OpenCL buffers (memory) for the input data.
 	param1, err := context.CreateEmptyBuffer(cl.MemReadOnly, ss*len(input1))
 	if err != nil {
 		logrus.Fatalf("CreateBuffer failed for matrices input: %+v", err)
@@ -134,7 +137,7 @@ func Structs(deviceIndex int) {
 	//     The dataPtr:s seems to be a point to the first element of the input,
 	//     while dataSize should be the total length of the data.
 	dataPtr := unsafe.Pointer(&input1[0])
-	dataSize := int(unsafe.Sizeof(input1[0])) * len(input1)
+	dataSize := ss * len(input1)
 	if _, err := queue.EnqueueWriteBuffer(param1, true, 0, dataSize, dataPtr, nil); err != nil {
 		logrus.Fatalf("EnqueueWriteBuffer failed: %+v", err)
 	}

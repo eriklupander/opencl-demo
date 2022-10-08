@@ -7,17 +7,22 @@ import (
 	"unsafe"
 )
 
-var squareSrc = `
+var squareLocalSrc = `
 __kernel void square(
    __global int* input,
    __global int* output)
 {
    int i = get_global_id(0);
-   output[i] = input[i] * input[i];
+   int localSize = get_local_size(0);
+	printf("%d\n", localSize);
+   for (int c = 0; c < localSize;c++) {
+      int index = i*localSize+c;
+      output[index] = input[index] * input[index];
+   }
 }
 `
 
-func Square(deviceIndex int) {
+func SquareLocalSize(deviceIndex int) {
 	// First, get hold of a Platform
 	platforms, _ := cl.GetPlatforms()
 
@@ -41,7 +46,7 @@ func Square(deviceIndex int) {
 	defer queue.Release()
 
 	// Create an OpenCL "program" from the source code. (squareSrc is declared elsewhere)
-	program, _ := context.CreateProgramWithSource([]string{squareSrc})
+	program, _ := context.CreateProgramWithSource([]string{squareLocalSrc})
 
 	// Build the OpenCL program
 	if err := program.BuildProgram(nil, ""); err != nil {
@@ -56,7 +61,7 @@ func Square(deviceIndex int) {
 	defer kernel.Release()
 
 	// Prepare data, note explicit use of int32 which we know are 4 bytes each.
-	elemCount := 1024
+	elemCount := 64
 	numbers := make([]int32, elemCount)
 	for i := 0; i < elemCount; i++ {
 		numbers[i] = int32(i)
@@ -103,7 +108,7 @@ func Square(deviceIndex int) {
 	st := time.Now()
 
 	// Finally, start work! Enqueue executes the loaded args on the specified kernel.
-	if _, err := queue.EnqueueNDRangeKernel(kernel, nil, []int{1024}, nil, nil); err != nil {
+	if _, err := queue.EnqueueNDRangeKernel(kernel, nil, []int{16}, nil, nil); err != nil {
 		panic("EnqueueNDRangeKernel failed: " + err.Error())
 	}
 
@@ -125,7 +130,7 @@ func Square(deviceIndex int) {
 	if _, err := queue.EnqueueReadBuffer(outputBuffer, true, 0, outputDataSizeOut, outputDataPtrOut, nil); err != nil {
 		panic("EnqueueReadBuffer failed: " + err.Error())
 	}
-	for i := 0; i < elemCount && i < 32; i++ {
+	for i := 0; i < elemCount; i++ {
 		fmt.Printf("%d ", results[i])
 	}
 }

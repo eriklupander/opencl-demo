@@ -3,6 +3,7 @@ package app
 import (
 	"github.com/jgillich/go-opencl/cl"
 	"github.com/sirupsen/logrus"
+	"strings"
 	"unsafe"
 )
 
@@ -65,6 +66,12 @@ func Vectors(deviceIndex int) {
 	}
 	device := devices[deviceIndex]
 	logrus.Infof("Using device %d %v", deviceIndex, device.Name())
+
+	// Check for double precision support
+	if !strings.Contains(device.Extensions(), "cl_khr_fp64") {
+		logrus.Errorf("device does not support double-precision floating point: extensions supported: %s", device.Extensions())
+		return
+	}
 
 	// 1. Select a device to use. On my mac: 0 == CPU, 1 == Iris GPU, 2 == GeForce 750M GPU
 	// Use selected device to create an OpenCL context

@@ -13,7 +13,6 @@ var batchedSquareSrc = `__kernel void square(
 {
    int i = get_global_id(0);
    int localSize = get_local_size(0);
-   int local_id = get_local_id(0);
    for (int n = 0;n < localSize;n++) {
        	int localIndex = i * localSize+n;
        	output[localIndex] = input[localIndex] * input[localIndex];
@@ -118,6 +117,7 @@ func BatchedSquare(deviceIndex int) {
 		if lz > maxWGSize {
 			continue
 		}
+
 		var sum = int64(0)
 		for it := 0; it < int(iterations); it++ {
 			st := time.Now()
@@ -135,7 +135,7 @@ func BatchedSquare(deviceIndex int) {
 			//fmt.Printf("LZ: %d Took: %v\n", lz, time.Since(st))
 			sum += time.Since(st).Microseconds()
 		}
-		fmt.Printf("| %s   | %d | %d | %v |\n", devices[deviceIndex].Name(), 1048576/lz, lz, (time.Microsecond * time.Duration(sum/iterations)).String())
+		fmt.Printf("| %s   | %d | %d | %v |\n", devices[deviceIndex].Name(), elemCount/lz, lz, (time.Microsecond * time.Duration(sum/iterations)).String())
 	}
 
 	// Allocate storage for loading the output from the OpenCL program. Remember, we expect

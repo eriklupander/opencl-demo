@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-	op := flag.String("op", "square", "Demo to run: square, structs, multidim, vectors, batched-square")
+	op := flag.String("op", "square", "Demo to run: square, square-local, structs, multidim, vectors, batched-square, benchmark")
 	deviceIndex := flag.Int("device", 0, "OpenCL device index")
 	flag.Parse()
 
@@ -22,7 +22,13 @@ func main() {
 		app.BatchedSquare(*deviceIndex)
 	case "square":
 		app.Square(*deviceIndex)
+	case "square-local":
+		app.SquareLocalSize(*deviceIndex)
+	case "benchmark":
+		app.Benchmark(*deviceIndex)
+	case "benchmark2":
+		app.Benchmark2(*deviceIndex)
 	default:
-		fmt.Printf("Unknown op: %s. Options: square, structs, multidim, vectors, batched-square\n", *op)
+		fmt.Printf("Unknown op: %s. Options: square, square-local, structs, multidim, vectors, batched-square, benchmark\n", *op)
 	}
 }

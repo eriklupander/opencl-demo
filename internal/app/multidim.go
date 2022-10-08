@@ -12,13 +12,16 @@ __kernel void squareRoot(
    __global float* input,
    __global float* output)
 {
-	
-   int x = get_global_id(1);
-   int y = get_global_id(0);
-   int maxY = get_global_size(0);
-   int i = x*maxY+y;
-   printf("x: %d, y: %d, maxY: %d, i: %d\n",x, y, maxY, i);
-   output[i] = sqrt(input[i]);
+   int groupId_col = get_group_id(0);
+   int groupId_row = get_group_id(1);
+
+   int row = get_global_id(1);         // get row from second dimension
+   int col = get_global_id(0);         // get col from first dimension
+   int colCount = get_global_size(0);  // get number of columns
+   int index = row * colCount + col;   // calculate 1D index
+   int localId = get_local_id(0);
+   printf("row: %d, col: %d, i: %d, local id: %d, groupId_row: %d, groupId_col: %d\n", row, col, index, localId, groupId_row, groupId_col);
+   output[index] = sqrt(input[index]);
 }
 `
 
@@ -61,10 +64,17 @@ func MultiDim(deviceIndex int) {
 	defer kernel.Release()
 
 	// Prepare data, note explicit use of float32 which we know are 4 bytes each.
-	elemCount := 8 * 6
+	elems := 4
+	elemCount := elems * elems
 	numbers := make([]float32, elemCount)
 	for i := 0; i < elemCount; i++ {
 		numbers[i] = float32(i)
+	}
+	for i := 0; i < elems; i++ {
+		for j := 0; j < elems; j++ {
+			fmt.Printf("|%f", numbers[i*4+j])
+		}
+		fmt.Printf("|\n")
 	}
 
 	// Prepare for loading data into Device memory by creating an empty OpenCL buffers (memory)
@@ -105,10 +115,24 @@ func MultiDim(deviceIndex int) {
 		panic("SetKernelArgs failed: " + err.Error())
 	}
 
+	wgSize, err := kernel.WorkGroupSize(devices[deviceIndex])
+	if err != nil {
+		panic("get work group size: " + err.Error())
+	}
+	preferredMultiple, err := kernel.PreferredWorkGroupSizeMultiple(devices[deviceIndex])
+	if err != nil {
+		panic("get preferred multiple: " + err.Error())
+	}
+	fmt.Printf("WorkGroupSize: %d\n", wgSize)
+	fmt.Printf("Preferred multiple: %d\n", preferredMultiple)
+	fmt.Printf("Work item sizes: %v\n", devices[deviceIndex].MaxWorkItemSizes())
+	fmt.Printf("Max compute units: %v\n", devices[deviceIndex].MaxComputeUnits())
+	fmt.Printf("Max samplers: %v\n", devices[deviceIndex].MaxSamplers())
+
 	st := time.Now()
 
 	// Finally, start work! Enqueue executes the loaded args on the specified kernel.
-	if _, err := queue.EnqueueNDRangeKernel(kernel, nil, []int{8, 6}, nil, nil); err != nil {
+	if _, err := queue.EnqueueNDRangeKernel(kernel, nil, []int{elems, elems}, []int{1, 1}, nil); err != nil {
 		panic("EnqueueNDRangeKernel failed: " + err.Error())
 	}
 
@@ -130,7 +154,10 @@ func MultiDim(deviceIndex int) {
 	if _, err := queue.EnqueueReadBuffer(outputBuffer, true, 0, outputDataSizeOut, outputDataPtrOut, nil); err != nil {
 		panic("EnqueueReadBuffer failed: " + err.Error())
 	}
-	for i := 0; i < elemCount; i++ {
-		fmt.Printf("%f ", results[i])
+	for i := 0; i < elems; i++ {
+		for j := 0; j < elems; j++ {
+			fmt.Printf("|%f", results[i*4+j])
+		}
+		fmt.Printf("|\n")
 	}
 }

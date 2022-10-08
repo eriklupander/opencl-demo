@@ -7,17 +7,20 @@ import (
 	"unsafe"
 )
 
-var squareSrc = `
-__kernel void square(
-   __global int* input,
-   __global int* output)
+var benchmarkSrc = `
+__kernel void squareRoot(
+   __global float* input,
+   __global float* output)
 {
-   int i = get_global_id(0);
-   output[i] = input[i] * input[i];
+   int row = get_global_id(1);         // get row from second dimension
+   int col = get_global_id(0);         // get col from first dimension
+   int colCount = get_global_size(0);  // get number of columns
+   int index = row * colCount + col;   // calculate 1D index
+   output[index] = sqrt(input[index]);
 }
 `
 
-func Square(deviceIndex int) {
+func Benchmark(deviceIndex int) {
 	// First, get hold of a Platform
 	platforms, _ := cl.GetPlatforms()
 
@@ -40,8 +43,8 @@ func Square(deviceIndex int) {
 	queue, _ := context.CreateCommandQueue(devices[deviceIndex], 0)
 	defer queue.Release()
 
-	// Create an OpenCL "program" from the source code. (squareSrc is declared elsewhere)
-	program, _ := context.CreateProgramWithSource([]string{squareSrc})
+	// Create an OpenCL "program" from the source code. (benchmarkSrc is declared elsewhere)
+	program, _ := context.CreateProgramWithSource([]string{benchmarkSrc})
 
 	// Build the OpenCL program
 	if err := program.BuildProgram(nil, ""); err != nil {
@@ -49,17 +52,18 @@ func Square(deviceIndex int) {
 	}
 
 	// Create the actual Kernel with a name, the Kernel is what we call when we want to execute something.
-	kernel, err := program.CreateKernel("square")
+	kernel, err := program.CreateKernel("squareRoot")
 	if err != nil {
 		panic("CreateKernel failed: " + err.Error())
 	}
 	defer kernel.Release()
 
-	// Prepare data, note explicit use of int32 which we know are 4 bytes each.
-	elemCount := 1024
-	numbers := make([]int32, elemCount)
+	// Prepare data, note explicit use of float32 which we know are 4 bytes each.
+	elems := 1024
+	elemCount := elems * elems
+	numbers := make([]float32, elemCount)
 	for i := 0; i < elemCount; i++ {
-		numbers[i] = int32(i)
+		numbers[i] = float32(i)
 	}
 
 	// Prepare for loading data into Device memory by creating an empty OpenCL buffers (memory)
@@ -73,7 +77,7 @@ func Square(deviceIndex int) {
 
 	// Do the same for the output. We'll expect to get int32's back, the same number
 	// of items we passed in the input.
-	outputBuffer, err := context.CreateEmptyBuffer(cl.MemWriteOnly, 4*len(numbers))
+	outputBuffer, err := context.CreateEmptyBuffer(cl.MemReadOnly, 4*len(numbers))
 	if err != nil {
 		panic("CreateBuffer failed for output: " + err.Error())
 	}
@@ -100,32 +104,58 @@ func Square(deviceIndex int) {
 		panic("SetKernelArgs failed: " + err.Error())
 	}
 
-	st := time.Now()
-
-	// Finally, start work! Enqueue executes the loaded args on the specified kernel.
-	if _, err := queue.EnqueueNDRangeKernel(kernel, nil, []int{1024}, nil, nil); err != nil {
-		panic("EnqueueNDRangeKernel failed: " + err.Error())
+	maxWgSize := devices[deviceIndex].MaxWorkGroupSize()
+	wgSize, err := kernel.WorkGroupSize(devices[deviceIndex])
+	if err != nil {
+		panic("get work group size: " + err.Error())
 	}
-
-	// Finish() blocks the main goroutine until the OpenCL queue is empty, i.e. all calculations are done.
-	// The results have been written to the outputBuffer.
-	if err := queue.Finish(); err != nil {
-		panic("Finish failed: %" + err.Error())
+	preferredMultiple, err := kernel.PreferredWorkGroupSizeMultiple(devices[deviceIndex])
+	if err != nil {
+		panic("get preferred multiple: " + err.Error())
 	}
+	wiSizes := devices[deviceIndex].MaxWorkItemSizes()
+	fmt.Printf("WorkGroupSize: %d\n", wgSize)
+	fmt.Printf("Preferred multiple: %d\n", preferredMultiple)
+	fmt.Printf("Work item sizes: %v\n", wiSizes)
+	fmt.Printf("Max compute units: %v\n", devices[deviceIndex].MaxComputeUnits())
+	fmt.Printf("Max samplers: %v\n", devices[deviceIndex].MaxSamplers())
 
-	fmt.Printf("Took: %v\n", time.Since(st))
+	localSizes := []int{1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024}
+	fmt.Println(
+		`| Device        | Work group size | Local size | Result  |
+| ------------- |:-------------:| -----:| -----:|`)
+	iterations := int64(16)
+	for _, localSize := range localSizes {
+		var sum = int64(0)
+		st := time.Now()
+		if localSize*localSize > maxWgSize || localSize > wiSizes[0] || localSize > wiSizes[1] {
+			continue
+		}
+		for it := 0; it < int(iterations); it++ {
+			// Finally, start work! Enqueue executes the loaded args on the specified kernel.
+			if _, err := queue.EnqueueNDRangeKernel(kernel, nil, []int{elems, elems}, []int{localSize, localSize}, nil); err != nil {
+				panic("EnqueueNDRangeKernel failed: " + err.Error())
+			}
+
+			// Finish() blocks the main goroutine until the OpenCL queue is empty, i.e. all calculations are done.
+			// The results have been written to the outputBuffer.
+			if err := queue.Finish(); err != nil {
+				panic("Finish failed: %" + err.Error())
+			}
+
+			sum += time.Since(st).Microseconds()
+		}
+		fmt.Printf("| %s   | %d | %d | %v |\n", devices[deviceIndex].Name(), elemCount, localSize, (time.Microsecond * time.Duration(sum/iterations)).String())
+	}
 
 	// Allocate storage for loading the output from the OpenCL program. Remember, we expect
 	// the same number of elements and type as the input.
-	results := make([]int32, len(numbers))
+	results := make([]float32, len(numbers))
 
 	// The EnqueueReadBuffer copies the data in the OpenCL "output" buffer into the "results" slice.
 	outputDataPtrOut := unsafe.Pointer(&results[0])
 	outputDataSizeOut := int(unsafe.Sizeof(results[0])) * len(results)
 	if _, err := queue.EnqueueReadBuffer(outputBuffer, true, 0, outputDataSizeOut, outputDataPtrOut, nil); err != nil {
 		panic("EnqueueReadBuffer failed: " + err.Error())
-	}
-	for i := 0; i < elemCount && i < 32; i++ {
-		fmt.Printf("%d ", results[i])
 	}
 }
