@@ -28,6 +28,8 @@ func main() {
 		app.Benchmark(*deviceIndex)
 	case "benchmark2":
 		app.Benchmark2(*deviceIndex)
+	case "benchmark3":
+		app.Benchmark3(*deviceIndex)
 	default:
 		fmt.Printf("Unknown op: %s. Options: square, square-local, structs, multidim, vectors, batched-square, benchmark\n", *op)
 	}
